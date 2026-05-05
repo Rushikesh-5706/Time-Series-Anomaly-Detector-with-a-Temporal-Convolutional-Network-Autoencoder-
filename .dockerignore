@@ -1,0 +1,14 @@
+.git
+.gitignore
+__pycache__
+*.py[cod]
+*.egg-info
+.env
+.venv
+venv
+*.log
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+tests/__pycache__
