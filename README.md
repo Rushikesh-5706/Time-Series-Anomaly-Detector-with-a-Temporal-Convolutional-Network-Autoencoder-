@@ -13,55 +13,78 @@ measuring reconstruction error at inference time.
 The system is organized into four sequential stages that flow from raw data
 to an interactive visualization layer.
 
-```
-Raw Time-Series Data (NASA SMAP Channel P-1)
-              |
-              v
-      [ Data Preprocessing ]
-       MinMax Normalization
-       Sliding Window (size=100)
-              |
-    +---------+---------+
-    |                   |
-    v                   v
-Training Data        Test Data
-    |                   |
-    v                   |
-[ TCN Autoencoder ]     |
-  Encoder (TCN blocks,  |
-  dilations 1,2,4,8)    |
-  Decoder (mirrored)    |
-    |                   |
-    v                   |
-Saved Model Weights     |
-    |                   |
-    +----------+--------+
-               |
-               v
-         [ Inference ]
-    Reconstruct test windows
-               |
-               v
-  Reconstruction Error (MSE per window)
-               |
-               v
-  Exponential Moving Average Smoothing
-               |
-        +------+------+
-        |             |
-        v             v
-  Percentile       POT (GPD fit
-  Threshold        to error tail)
-        |             |
-        v             v
-  anomalies_     anomalies_
-  percentile.csv   pot.csv
-               |
-               v
-   [ Streamlit Dashboard ]
-   Signal Explorer | Reconstruction Overlay
-   Anomaly Score Timeline | Channel Contribution
-   Generate Full Report
+```mermaid
+flowchart TD
+    %% Define Styles
+    classDef dataFill fill:#f4f4f4,stroke:#333,stroke-width:2px,color:#333,rx:5,ry:5;
+    classDef processFill fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,color:#01579b,rx:5,ry:5;
+    classDef modelFill fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,color:#1b5e20,rx:5,ry:5;
+    classDef evalFill fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100,rx:5,ry:5;
+    classDef uiFill fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,color:#4a148c,rx:5,ry:5;
+    
+    %% Nodes
+    RawData[("Raw Time-Series Data\n(NASA SMAP Channel P-1)")]:::dataFill
+    
+    subgraph Preprocessing["Data Preprocessing Pipeline"]
+        Norm["MinMax Normalization"]:::processFill
+        Window["Sliding Window Generation\n(Size = 100)"]:::processFill
+    end
+    
+    TrainData[/"Training Data\n(Windowed)"/]:::dataFill
+    TestData[/"Test Data\n(Windowed)"/]:::dataFill
+    
+    subgraph TCN_Autoencoder["TCN Autoencoder Architecture"]
+        Encoder["Encoder\n(TCN Blocks, Dilations: 1,2,4,8)"]:::modelFill
+        Latent(("Latent Space\n(Dim = 32)")):::modelFill
+        Decoder["Decoder\n(Mirrored TCN Blocks)"]:::modelFill
+    end
+    
+    ModelWeights[("Saved Model Weights\n(tcn_autoencoder.pth)")]:::dataFill
+    
+    subgraph Inference["Inference & Evaluation Layer"]
+        Reconstruct["Reconstruct Test Windows"]:::evalFill
+        MSE["Calculate Reconstruction Error\n(MSE per Window)"]:::evalFill
+        EMA["Exponential Moving Average\n(Smoothing)"]:::evalFill
+        
+        subgraph Thresholding["Dynamic Thresholding"]
+            Percentile["Fixed Percentile\n(99th Quantile)"]:::evalFill
+            POT["Peak-Over-Threshold\n(GPD Fit to Tail)"]:::evalFill
+        end
+        
+        ResultPerc[/"anomalies_percentile.csv"/]:::dataFill
+        ResultPOT[/"anomalies_pot.csv"/]:::dataFill
+    end
+    
+    subgraph Dashboard["Streamlit Interactive Dashboard"]
+        UI1["Signal Explorer"]:::uiFill
+        UI2["Reconstruction Overlay"]:::uiFill
+        UI3["Anomaly Score Timeline"]:::uiFill
+        UI4["Channel Contribution"]:::uiFill
+        Export["Generate Full JSON Report"]:::uiFill
+    end
+    
+    %% Connections
+    RawData --> Preprocessing
+    Norm --> Window
+    Preprocessing --> TrainData
+    Preprocessing --> TestData
+    
+    TrainData --> TCN_Autoencoder
+    Encoder --> Latent --> Decoder
+    TCN_Autoencoder --> ModelWeights
+    
+    TestData --> Reconstruct
+    ModelWeights --> Reconstruct
+    Reconstruct --> MSE --> EMA
+    
+    EMA --> Thresholding
+    Percentile --> ResultPerc
+    POT --> ResultPOT
+    
+    ResultPerc --> Dashboard
+    ResultPOT --> Dashboard
+    
+    UI1 ~~~ UI2 ~~~ UI3 ~~~ UI4 ~~~ Export
 ```
 
 ---
