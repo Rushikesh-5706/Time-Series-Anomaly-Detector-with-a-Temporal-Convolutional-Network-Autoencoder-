@@ -22,9 +22,11 @@ data/processed/*
 !data/processed/.gitkeep
 models/*.pth
 models/*.h5
+models/*.json
 !models/.gitkeep
 results/*.csv
 results/*.json
+results/*.npy
 !results/.gitkeep
 .DS_Store
 Thumbs.db
