@@ -1,16 +1,17 @@
 """
 Preprocessing pipeline for the NASA SMAP dataset.
 
-Downloads channel P-1 telemetry data, applies MinMax normalization,
-creates overlapping sliding windows, and serializes all artifacts to disk.
+Downloads channel P-1 telemetry data via git sparse-checkout, applies MinMax
+normalization, creates overlapping sliding windows, and serializes all
+artifacts to disk. Falls back to seeded synthetic data if the download fails.
 """
 
 import os
 import sys
 import logging
-import requests
+import subprocess
+import shutil
 import numpy as np
-import pandas as pd
 import joblib
 from pathlib import Path
 from sklearn.preprocessing import MinMaxScaler
@@ -22,16 +23,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
 WINDOW_SIZE = int(os.getenv("WINDOW_SIZE", 100))
 RAW_DIR = Path(os.getenv("DATASET_RAW_DIR", "data/raw"))
 PROCESSED_DIR = Path(os.getenv("DATASET_PROCESSED_DIR", "data/processed"))
 CHANNEL = os.getenv("DATASET_CHANNEL", "P-1")
-
-# The official NASA SMAP telemetry URLs (GitHub and S3) are dead (404/403).
-# We will generate mathematically sound synthetic data to ensure the pipeline runs.
+SYNTHETIC_SEED = 42
 
 
 def create_directories() -> None:
@@ -40,35 +36,112 @@ def create_directories() -> None:
     logger.info("Directories verified: %s, %s", RAW_DIR, PROCESSED_DIR)
 
 
-def download_npy(channel: str, is_train: bool, destination: Path) -> np.ndarray:
+def fetch_via_git_sparse(channel: str, split: str, destination: Path) -> bool:
+    """
+    Attempts to download a single .npy file from the telemanom repository
+    using git sparse-checkout, which correctly resolves Git LFS pointers.
+    Returns True on success, False on any failure.
+    """
+    clone_dir = RAW_DIR / "_telemanom_clone"
+    try:
+        if clone_dir.exists():
+            shutil.rmtree(clone_dir)
+
+        subprocess.run(
+            [
+                "git", "clone",
+                "--no-checkout",
+                "--filter=blob:none",
+                "--depth=1",
+                "https://github.com/khundman/telemanom.git",
+                str(clone_dir),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+
+        target_path = f"data/{split}/{channel}.npy"
+        subprocess.run(
+            ["git", "sparse-checkout", "set", target_path],
+            cwd=str(clone_dir),
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+        subprocess.run(
+            ["git", "checkout"],
+            cwd=str(clone_dir),
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+
+        source = clone_dir / target_path
+        if not source.exists():
+            logger.warning("Sparse checkout did not produce the expected file at %s", source)
+            return False
+
+        shutil.copy2(source, destination)
+        shutil.rmtree(clone_dir)
+        logger.info("Downloaded %s via git sparse-checkout to %s", target_path, destination)
+        return True
+
+    except Exception as exc:
+        logger.warning("Git sparse-checkout failed: %s", exc)
+        if clone_dir.exists():
+            shutil.rmtree(clone_dir)
+        return False
+
+
+def generate_synthetic_smap(channel: str, is_train: bool) -> np.ndarray:
+    """
+    Generates realistic synthetic sensor data as a fallback when the upstream
+    repository is unreachable. The random state is seeded for reproducibility.
+
+    The signal structure mirrors the SMAP P-1 channel: 25 features with
+    oscillatory dynamics and injected anomaly in the test set.
+    """
+    rng = np.random.RandomState(SYNTHETIC_SEED + (0 if is_train else 1))
+    num_samples = 4000 if is_train else 1500
+    num_features = 25
+
+    time_axis = np.linspace(0, 100, num_samples)
+    data = np.zeros((num_samples, num_features))
+
+    for i in range(num_features):
+        freq = rng.uniform(0.1, 2.0)
+        phase = rng.uniform(0, 2 * np.pi)
+        amplitude = rng.uniform(0.5, 1.5)
+        data[:, i] = amplitude * np.sin(time_axis * freq + phase) + rng.normal(0, 0.15, num_samples)
+
+    if not is_train:
+        anomaly_start = int(num_samples * 0.70)
+        anomaly_end = anomaly_start + 60
+        data[anomaly_start:anomaly_end, 0] += rng.normal(3.5, 0.8, 60)
+
+    return data
+
+
+def load_or_generate(channel: str, is_train: bool, destination: Path) -> np.ndarray:
     if destination.exists():
-        logger.info("Cache hit — skipping download: %s", destination)
+        logger.info("Cache hit: %s", destination)
         return np.load(destination, allow_pickle=True)
 
-    logger.warning("Official data URLs are dead (403/404). Generating synthetic SMAP telemetry data for %s.", channel)
-    
-    # Generate realistic-looking synthetic sensor data (SMAP typically has ~25 to 55 features)
-    num_samples = 4000 if is_train else 1500
-    num_features = 25 
-    
-    # Base signal with some noise
-    time = np.linspace(0, 100, num_samples)
-    synthetic_data = np.zeros((num_samples, num_features))
-    
-    for i in range(num_features):
-        freq = np.random.uniform(0.1, 2.0)
-        phase = np.random.uniform(0, 2 * np.pi)
-        synthetic_data[:, i] = np.sin(time * freq + phase) + np.random.normal(0, 0.2, num_samples)
-        
-    # Inject an anomaly in the test set
-    if not is_train:
-        anomaly_start = int(num_samples * 0.7)
-        anomaly_end = anomaly_start + 50
-        synthetic_data[anomaly_start:anomaly_end, 0] += np.random.normal(3.0, 1.0, 50)
-        
-    np.save(destination, synthetic_data)
-    logger.info("Synthetic data saved to %s", destination)
-    return synthetic_data
+    split = "train" if is_train else "test"
+    success = fetch_via_git_sparse(channel, split, destination)
+
+    if success:
+        data = np.load(destination, allow_pickle=True)
+        logger.info("Real SMAP data loaded: %s %s", channel, split)
+    else:
+        logger.warning(
+            "Real data unavailable. Using seeded synthetic fallback for %s %s.", channel, split
+        )
+        data = generate_synthetic_smap(channel, is_train)
+        np.save(destination, data)
+
+    return data
 
 
 def normalize(
@@ -109,8 +182,8 @@ def main() -> None:
     train_raw_path = RAW_DIR / f"{CHANNEL}_train.npy"
     test_raw_path = RAW_DIR / f"{CHANNEL}_test.npy"
 
-    train_data = download_npy(CHANNEL, is_train=True, destination=train_raw_path)
-    test_data = download_npy(CHANNEL, is_train=False, destination=test_raw_path)
+    train_data = load_or_generate(CHANNEL, is_train=True, destination=train_raw_path)
+    test_data = load_or_generate(CHANNEL, is_train=False, destination=test_raw_path)
 
     if train_data.ndim == 1:
         train_data = train_data.reshape(-1, 1)
@@ -128,7 +201,7 @@ def main() -> None:
     logger.info("Scaler saved to %s", scaler_path)
 
     np.save(PROCESSED_DIR / "test_raw.npy", test_scaled)
-    logger.info("Raw (unwindowed) test data saved to data/processed/test_raw.npy")
+    logger.info("Unwindowed test data saved to data/processed/test_raw.npy")
 
     train_windows = create_windows(train_scaled, WINDOW_SIZE)
     test_windows = create_windows(test_scaled, WINDOW_SIZE)
