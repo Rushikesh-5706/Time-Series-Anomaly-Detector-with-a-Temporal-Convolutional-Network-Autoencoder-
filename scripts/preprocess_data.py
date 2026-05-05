@@ -30,12 +30,9 @@ RAW_DIR = Path(os.getenv("DATASET_RAW_DIR", "data/raw"))
 PROCESSED_DIR = Path(os.getenv("DATASET_PROCESSED_DIR", "data/processed"))
 CHANNEL = os.getenv("DATASET_CHANNEL", "P-1")
 
-SMAP_TRAIN_URL = (
-    "https://raw.githubusercontent.com/khundman/telemanom/master/data/train/{channel}.npy"
-)
-SMAP_TEST_URL = (
-    "https://raw.githubusercontent.com/khundman/telemanom/master/data/test/{channel}.npy"
-)
+# The NASA SMAP telemetry data is hosted in a ZIP file on Amazon S3.
+# The raw.githubusercontent URLs are deprecated and return 404.
+TELEMANOM_DATA_ZIP_URL = "https://s3-us-west-2.amazonaws.com/telemanom/data.zip"
 
 
 def create_directories() -> None:
@@ -44,20 +41,38 @@ def create_directories() -> None:
     logger.info("Directories verified: %s, %s", RAW_DIR, PROCESSED_DIR)
 
 
-def download_npy(url: str, destination: Path) -> np.ndarray:
+def download_npy(channel: str, is_train: bool, destination: Path) -> np.ndarray:
     if destination.exists():
         logger.info("Cache hit — skipping download: %s", destination)
         return np.load(destination, allow_pickle=True)
 
-    logger.info("Downloading from %s", url)
-    response = requests.get(url, timeout=60)
-    if response.status_code != 200:
-        raise RuntimeError(
-            f"Download failed with HTTP {response.status_code} for URL: {url}"
-        )
+    # Download data.zip if it doesn't exist locally
+    zip_path = RAW_DIR / "data.zip"
+    if not zip_path.exists():
+        logger.info("Downloading dataset archive from %s", TELEMANOM_DATA_ZIP_URL)
+        response = requests.get(TELEMANOM_DATA_ZIP_URL, stream=True, timeout=120)
+        if response.status_code != 200:
+            raise RuntimeError(f"Download failed with HTTP {response.status_code}")
+        
+        with open(zip_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                f.write(chunk)
+        logger.info("Archive saved to %s", zip_path)
 
-    destination.write_bytes(response.content)
-    logger.info("Saved to %s (%d bytes)", destination, len(response.content))
+    import zipfile
+    logger.info("Extracting %s data for channel %s from archive", "train" if is_train else "test", channel)
+    
+    # Path inside the zip file
+    internal_path = f"data/train/{channel}.npy" if is_train else f"data/test/{channel}.npy"
+    
+    with zipfile.ZipFile(zip_path, 'r') as z:
+        if internal_path not in z.namelist():
+            raise FileNotFoundError(f"{internal_path} not found in the downloaded archive.")
+        
+        with z.open(internal_path) as f:
+            destination.write_bytes(f.read())
+            
+    logger.info("Saved to %s", destination)
     return np.load(destination, allow_pickle=True)
 
 
@@ -99,12 +114,8 @@ def main() -> None:
     train_raw_path = RAW_DIR / f"{CHANNEL}_train.npy"
     test_raw_path = RAW_DIR / f"{CHANNEL}_test.npy"
 
-    train_data = download_npy(
-        SMAP_TRAIN_URL.format(channel=CHANNEL), train_raw_path
-    )
-    test_data = download_npy(
-        SMAP_TEST_URL.format(channel=CHANNEL), test_raw_path
-    )
+    train_data = download_npy(CHANNEL, is_train=True, destination=train_raw_path)
+    test_data = download_npy(CHANNEL, is_train=False, destination=test_raw_path)
 
     if train_data.ndim == 1:
         train_data = train_data.reshape(-1, 1)
