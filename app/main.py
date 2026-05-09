@@ -166,9 +166,8 @@ def main():
     data, error = load_artifacts()
 
     if error:
-        st.warning("No trained model or processed data found.")
-        if st.button("Run Data Pipeline & Train Model"):
-            run_pipeline()
+        st.warning("No trained model or processed data found. Running data pipeline automatically...")
+        run_pipeline()
         return
 
     scores_df = data["scores_df"]
