@@ -51,7 +51,7 @@ def load_artifacts():
     ]
     missing = [str(p) for p in required if not p.exists()]
     if missing:
-        return None, f"Missing result files: {missing}. Run evaluate.py first."
+        return None, "missing"
 
     scores_df = pd.read_csv(RESULTS_DIR / "anomaly_scores.csv")
     percentile_df = pd.read_csv(RESULTS_DIR / "anomalies_percentile.csv")
@@ -139,6 +139,19 @@ def generate_report(data: dict, selected_channels: list, anomaly_idx: int) -> di
     return report
 
 
+def run_pipeline():
+    import subprocess
+    import sys
+    try:
+        with st.spinner("🚀 First run detected! Running preprocessing, training, and evaluation pipeline (this will take 10-15 minutes). Please don't close this page..."):
+            subprocess.run([sys.executable, "scripts/preprocess_data.py"], check=True)
+            subprocess.run([sys.executable, "scripts/train.py"], check=True)
+            subprocess.run([sys.executable, "scripts/evaluate.py"], check=True)
+        st.success("Pipeline completed successfully! Refreshing...")
+        st.rerun()
+    except subprocess.CalledProcessError as e:
+        st.error(f"Pipeline failed: {e}")
+
 # ---------------------------------------------------------------------------
 # Main application
 # ---------------------------------------------------------------------------
@@ -153,11 +166,9 @@ def main():
     data, error = load_artifacts()
 
     if error:
-        st.error(error)
-        st.info(
-            "Run the preprocessing, training, and evaluation scripts before "
-            "launching this dashboard."
-        )
+        st.warning("No trained model or processed data found.")
+        if st.button("Run Data Pipeline & Train Model"):
+            run_pipeline()
         return
 
     scores_df = data["scores_df"]
