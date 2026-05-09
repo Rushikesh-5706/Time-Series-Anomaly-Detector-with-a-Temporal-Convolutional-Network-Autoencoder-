@@ -114,13 +114,10 @@ flowchart TD
 - Docker >= 24.0 and Docker Compose >= 2.20
 - Or, for local execution: Python 3.11, pip
 
-No credentials are required. The preprocessing script attempts to fetch the NASA
-SMAP P-1 channel from the telemanom repository using git sparse-checkout. If the
-repository is unreachable (for example, due to network restrictions in the container
-environment), the script falls back to a seeded synthetic dataset that preserves
+No credentials are required. The preprocessing script generates a seeded synthetic dataset that preserves
 the structural properties of the SMAP channel with a known injected anomaly.
-All downloaded or generated files are cached in `data/raw/` so subsequent runs
-do not repeat the download.
+All generated files are cached in `data/raw/` so subsequent runs
+do not repeat the generation.
 
 ---
 
@@ -135,8 +132,8 @@ docker-compose up --build
 ```
 
 The Streamlit dashboard will be available at http://localhost:8501 once the
-container reports healthy. The first run will take several minutes because
-it downloads the dataset, trains the model, and evaluates before starting
+container reports healthy. The first run will take 10-15 minutes because
+it generates the dataset, trains the model, and evaluates before starting
 the UI.
 
 To rebuild after a code change:
