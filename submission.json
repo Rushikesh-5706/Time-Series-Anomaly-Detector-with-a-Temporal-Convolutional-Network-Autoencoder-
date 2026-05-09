@@ -1,5 +1,5 @@
 {
-  "dataset_used": "NASA_SMAP",
+  "dataset_used": "NASA_SMAP_benchmark",
   "model_hyperparameters": {
     "window_size": 100,
     "latent_dim": 32,
