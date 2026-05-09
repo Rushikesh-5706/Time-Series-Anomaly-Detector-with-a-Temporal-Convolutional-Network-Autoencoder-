@@ -148,6 +148,7 @@ def run_pipeline():
             subprocess.run([sys.executable, "scripts/train.py"], check=True)
             subprocess.run([sys.executable, "scripts/evaluate.py"], check=True)
         st.success("Pipeline completed successfully! Refreshing...")
+        load_artifacts.clear()
         st.rerun()
     except subprocess.CalledProcessError as e:
         st.error(f"Pipeline failed: {e}")
