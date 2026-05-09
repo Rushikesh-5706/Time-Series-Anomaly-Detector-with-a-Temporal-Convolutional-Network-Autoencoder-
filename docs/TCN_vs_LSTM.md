@@ -81,7 +81,7 @@ reproducible metrics:
 | Training samples        | ~4,500 windows      |
 | Window size             | 100 timesteps       |
 | Epochs                  | 50                  |
-| Final training loss (epoch 50) | ~0.0008 (recorded in models/training_metadata.json) |
+| Final training loss (epoch 50) | ~0.0008 |
 | Approximate train time  | < 180 seconds (CPU) |
 | Trainable parameters    | ~120,000            |
 
