@@ -36,3 +36,17 @@ def test_normalize_range():
     train_scaled, test_scaled, scaler = normalize(train, test)
     assert train_scaled.min() >= 0.0 - 1e-6
     assert train_scaled.max() <= 1.0 + 1e-6
+
+
+def test_synthetic_reproducibility():
+    from preprocess_data import generate_synthetic_smap
+    data1 = generate_synthetic_smap("P-1", is_train=True)
+    data2 = generate_synthetic_smap("P-1", is_train=True)
+    np.testing.assert_array_equal(data1, data2)
+
+
+def test_anomaly_injection():
+    from preprocess_data import generate_synthetic_smap
+    test_data = generate_synthetic_smap("P-1", is_train=False)
+    # Anomaly injected around 70% of 1500 (index 1050)
+    assert test_data[1050:1110, 0].mean() > test_data[:1050, 0].mean()
