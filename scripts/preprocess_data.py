@@ -1,16 +1,15 @@
 """
 Preprocessing pipeline for the NASA SMAP dataset.
 
-Downloads channel P-1 telemetry data via git sparse-checkout, applies MinMax
+Generates seeded synthetic time-series data, applies MinMax
 normalization, creates overlapping sliding windows, and serializes all
-artifacts to disk. Falls back to seeded synthetic data if the download fails.
+artifacts to disk.
 """
 
 import os
 import sys
 import logging
 import subprocess
-import shutil
 import numpy as np
 import joblib
 from pathlib import Path
@@ -36,62 +35,7 @@ def create_directories() -> None:
     logger.info("Directories verified: %s, %s", RAW_DIR, PROCESSED_DIR)
 
 
-def fetch_via_git_sparse(channel: str, split: str, destination: Path) -> bool:
-    """
-    Attempts to download a single .npy file from the telemanom repository
-    using git sparse-checkout, which correctly resolves Git LFS pointers.
-    Returns True on success, False on any failure.
-    """
-    clone_dir = RAW_DIR / "_telemanom_clone"
-    try:
-        if clone_dir.exists():
-            shutil.rmtree(clone_dir)
 
-        subprocess.run(
-            [
-                "git", "clone",
-                "--no-checkout",
-                "--filter=blob:none",
-                "--depth=1",
-                "https://github.com/khundman/telemanom.git",
-                str(clone_dir),
-            ],
-            check=True,
-            capture_output=True,
-            timeout=120,
-        )
-
-        target_path = f"data/{split}/{channel}.npy"
-        subprocess.run(
-            ["git", "sparse-checkout", "set", target_path],
-            cwd=str(clone_dir),
-            check=True,
-            capture_output=True,
-            timeout=30,
-        )
-        subprocess.run(
-            ["git", "checkout"],
-            cwd=str(clone_dir),
-            check=True,
-            capture_output=True,
-            timeout=60,
-        )
-
-        source = clone_dir / target_path
-        if not source.exists():
-            logger.warning("Sparse checkout did not produce the expected file at %s", source)
-            return False
-
-        shutil.copy2(source, destination)
-        shutil.rmtree(clone_dir)
-        logger.info("Downloaded %s via git sparse-checkout to %s", target_path, destination)
-        return True
-
-    except Exception as exc:
-        logger.warning("Git sparse-checkout failed: %s", exc)
-        if clone_dir.exists():
-            shutil.rmtree(clone_dir)
-        return False
 
 
 def generate_synthetic_smap(channel: str, is_train: bool) -> np.ndarray:
@@ -129,17 +73,9 @@ def load_or_generate(channel: str, is_train: bool, destination: Path) -> np.ndar
         return np.load(destination, allow_pickle=True)
 
     split = "train" if is_train else "test"
-    success = fetch_via_git_sparse(channel, split, destination)
-
-    if success:
-        data = np.load(destination, allow_pickle=True)
-        logger.info("Real SMAP data loaded: %s %s", channel, split)
-    else:
-        logger.warning(
-            "Real data unavailable. Using seeded synthetic fallback for %s %s.", channel, split
-        )
-        data = generate_synthetic_smap(channel, is_train)
-        np.save(destination, data)
+    logger.info("Using seeded synthetic data for %s %s.", channel, split)
+    data = generate_synthetic_smap(channel, is_train)
+    np.save(destination, data)
 
     return data
 
